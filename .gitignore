@@ -1,0 +1,13 @@
+__pycache__/
+ckpt/
+log/
+.log
+.mp3
+wandb/
+.ckpt
+.txt
+.pth
+.pt
+tools/*.log
+tools/*.mp3
+tools/*.ckpt

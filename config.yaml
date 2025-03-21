@@ -1,0 +1,24 @@
+# Cấu hình training cho WhisperScoreModel
+
+# Thông tin dự án và wandb
+project: "whisper_score_training"
+
+# Training parameters
+num_epochs: 100
+batch_size: 1
+learning_rate: 0.0001
+encoder_lr: 0.000001      # Learning rate cho encoder
+early_stop_patience: 10
+warmup_epochs: 1
+
+# Dataset và model
+csv_file: "/mnt/disk3/Sondinh/DATA/full_vocal.csv"         # Đường dẫn đến file CSV chứa thông tin dataset
+sample_rate: 16000                   # Sample rate của audio (ví dụ)
+model_size: "tiny.en"                   # Kích thước model: tiny, base, small, etc.
+
+# DataLoader
+num_workers: 48
+
+# Checkpoint & log
+checkpoint_path: "ckpt/ckpt_pronunciation/ckpt_en_AdamW_L1_tiny_3fc_data_2_continu.pth"
+log_file: "log/log_pronunciation/train_en_AdamW_L1_tiny_3fc_data_2_continu.log"
