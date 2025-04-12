@@ -17,8 +17,8 @@ class SoftLabelCrossEntropyLoss(nn.Module):
         self.left_weight = left_weight
         self.right_weight = right_weight
         self.correct_weight = correct_weight
-        self.class_weight = class_weight  # nên là tensor nếu được truyền vào
-
+        self.class_weight = class_weight  
+        
     def forward(self, logits, target):
         """
         logits: đầu ra của model, shape (batch_size, num_classes)
@@ -38,45 +38,33 @@ class SoftLabelCrossEntropyLoss(nn.Module):
                 soft_targets[i, t + 1] = self.right_weight
                 
         soft_targets = soft_targets / soft_targets.sum(dim=1, keepdim=True)
-        
-        #print(soft_targets)
-        # Tính log_softmax của logits
         log_prob = F.log_softmax(logits, dim=1)
-        
-        # Tính loss theo công thức cross entropy cho soft labels:
-        # loss_sample = -sum(soft_target * log_prob)
         loss = -(soft_targets * log_prob).sum(dim=1)
         
-        # Nếu có áp dụng class_weight, nhân loss của mỗi mẫu với trọng số của lớp đúng
         if self.class_weight is not None:
-            weight = self.class_weight.to(logits.device)  # đảm bảo cùng device
-            sample_weights = weight[target]  # lấy trọng số tương ứng với nhãn đúng
+            weight = self.class_weight.to(logits.device)  
+            sample_weights = weight[target] 
             loss = loss * sample_weights
 
         return loss.mean()
 def main():
-    # Thiết lập số lớp và chọn nhãn đúng là 3 (trong trường hợp có 6 lớp: 0,1,2,3,4,5)
+    
     num_classes = 6
     target = torch.tensor([3])  # Chọn target là lớp 3
 
-    # Khởi tạo hàm loss với tham số mặc định (không dùng class_weight để dễ so sánh)
     criterion = SoftLabelCrossEntropyLoss(num_classes=num_classes,
                                           left_weight=0.15,
                                           right_weight=0.15,
                                           correct_weight=0.7,
                                           class_weight=None)
     
-    # Ví dụ 1: Dự đoán "tốt" (gần với nhãn đúng)
-    # Logits được thiết kế sao cho:
-    # - Giá trị cao nhất ở vị trí 3 (nhãn đúng)
-    # - Giá trị ở vị trí 2 và 4 (lân cận) cũng tương đối cao
+
     logits_good = torch.tensor([[ -1.0, -1.0, 0.5, 2.0, 0.1, -1.0]])
     
-    # Ví dụ 2: Dự đoán "kém" (xa nhãn đúng)
-    # Logits được thiết kế sao cho giá trị cao nhất không nằm gần nhãn đúng (lớp 3)
+
     logits_bad = torch.tensor([[2.0, 0.5, -1.0, -1.0, -1.0, 0.0]])
     
-    # Tính loss cho từng trường hợp
+
     loss_good = criterion(logits_good, target)
     loss_bad = criterion(logits_bad, target)
     
