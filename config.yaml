@@ -1,5 +1,5 @@
 project: "wav2vec2_score_training"
-model_id: "facebook/wav2vec2-base-960h"
+model_id: "Splend1dchan/wav2vec2-large-10min-lv60-self"
 num_epochs: 20
 batch_size: 1
 learning_rate: 0.00001
