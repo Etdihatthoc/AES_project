@@ -11,9 +11,8 @@ import wandb
 import yaml
 from sklearn.model_selection import train_test_split
 from dataloader import SpeakingDataset, collate_fn
-from model import MultimodalWhisperScoreModel
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from transformers import get_linear_schedule_with_warmup
+from model_new import MultimodalWav2VecScoreModel
+from transformers import get_linear_schedule_with_warmup, Wav2Vec2Processor
 from CELoss import SoftLabelCrossEntropyLoss
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -43,19 +42,19 @@ def compute_class_weights(labels, num_classes=21):
     weights[np.isinf(weights)] = 0.0
     return torch.tensor(weights, dtype=torch.float)
 
-def evaluate(model, data_loader, criterion, device):
+def evaluate(model, audio_encoder_id, data_loader, criterion, device):
     model.eval()
     total_samples = 0
     running_loss = 0.0
     running_mae = 0.0
-
+    processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     with torch.no_grad():
         for mels, labels, texts in data_loader:
+            mels = processor(mels, sampling_rate=16000, return_tensors="pt")
+            mels = mels['input_values'].squeeze(1)
             with torch.cuda.amp.autocast():
-                mels = mels.to(device)
-                labels = labels.to(device)
-                logits = model(mels, texts)
-                loss = criterion(logits, labels)
+                logits = model(mels.to(device), texts)
+                loss = criterion(logits, labels.to(device))
                 
             running_loss += loss.item() * mels.size(0)
             total_samples += mels.size(0)
@@ -70,7 +69,7 @@ def evaluate(model, data_loader, criterion, device):
     avg_mae = running_mae / total_samples if total_samples > 0 else 0
     return avg_loss, avg_mae
 
-def train_model(model, train_loader, val_loader, optimizer, criterion, device, 
+def train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, criterion, device, 
                 num_epochs, checkpoint_path, log_file, early_stop_patience, warmup_epochs, project, config):
     logging.basicConfig(level=logging.INFO, 
                         filename=log_file, 
@@ -108,18 +107,20 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, device,
     val_loss_list = []
     val_mae_list = []
 
+    processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
+
     for epoch in range(num_epochs):
         total_samples = 0
         running_loss = 0.0
         for i, (mels, labels, texts) in enumerate(train_loader):
             model.train()
+            # Để processor hoạt động với float32 mặc định
+            mels = processor(mels, sampling_rate=16000, return_tensors="pt")
+            mels = mels['input_values'].squeeze(1)
             with torch.cuda.amp.autocast():
-                mels = mels.to(device)
-                labels = labels.to(device)
-                
                 optimizer.zero_grad()
-                logits = model(mels, texts)
-                loss = criterion(logits, labels)
+                logits = model(mels.to(device), texts)
+                loss = criterion(logits, labels.to(device))
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
@@ -149,7 +150,7 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, device,
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
         
-        val_loss, val_mae = evaluate(model, val_loader, criterion, device)
+        val_loss, val_mae = evaluate(model, audio_encoder_id, val_loader, criterion, device)
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] validation completed. Avg Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] validation completed. Avg Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
         
@@ -225,7 +226,7 @@ def main():
     seed_everything(42)
     
     csv_file = config["csv_file"]
-    model_size = config["model_size"]
+    audio_encoder_id = config["audio_encoder_id"]
     batch_size = config["batch_size"]
     num_epochs = config["num_epochs"]
     learning_rate = config["learning_rate"]
@@ -299,7 +300,7 @@ def main():
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     
-    model = MultimodalWhisperScoreModel(whisper_model_size=model_size, text_model_name='bert-base-uncased')
+    model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id,text_model_name='bert-base-uncased')
     print("Model created. Fusion dimension =", model.fc[0].in_features)
     
     # Phân nhóm tham số
@@ -313,9 +314,9 @@ def main():
     ])
     
     # Sử dụng CrossEntropyLoss với class weights
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device)).to(device)
+    criterion = SoftLabelCrossEntropyLoss(num_classes=21,class_weight=class_weights.to(device)).to(device)
     
-    model = train_model(model, train_loader, val_loader, optimizer, criterion, device, 
+    model = train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, criterion, device, 
                          num_epochs=num_epochs, 
                          checkpoint_path=checkpoint_path, 
                          log_file=log_file, 
@@ -329,7 +330,7 @@ def main():
                         filemode='a',
                         format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger()
-    test_loss, test_mae = evaluate(model, test_loader, criterion, device)
+    test_loss, test_mae = evaluate(model, audio_encoder_id, test_loader, criterion, device)
     logger.info(f"Final Test - CrossEntropy Loss: {test_loss:.4f}, MAE: {test_mae:.4f}")
     print(f"Final Test - CrossEntropy Loss: {test_loss:.4f}, MAE: {test_mae:.4f}")
 

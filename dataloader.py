@@ -2,7 +2,6 @@ import torch
 import torch.utils.data as data
 import pandas as pd
 import librosa
-import whisper
 import random
 import nlpaug.augmenter.audio as naa
 import numpy as np
@@ -53,8 +52,7 @@ class SpeakingDataset(data.Dataset):
         num_chunks: Số chunk cố định mỗi sample
         is_train: Nếu True thì áp dụng augment data, ngược lại không augment.
         """
-        augment_csv = "augmented_data.csv"
-        df_aug = pd.read_csv(augment_csv)
+        df_aug = pd.read_csv(csv_file)
         df_raw = pd.read_csv(csv_file)
         
         self.df = pd.concat([df_raw, df_aug], ignore_index=True)
@@ -74,17 +72,17 @@ class SpeakingDataset(data.Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        audio_path = row['absolute_path'].replace('/mnt/son_usb/DATA_Vocal', '/media/gpus/Data/DATA_Vocal')
+        audio_path = row['absolute_path'].replace('/mnt/son_usb/DATA_Vocal', '/kaggle/input/vocal-dataset/DATA_Vocal')
         score = row['pronunciation']  # điểm theo thang 0-10, với bước nhảy 0.5
-        transcript = row['text'] 
-
+        transcript = row['text']
+    
         # Tính label cho bài toán classification: chuyển score thành index (0 -> 0, 0.5 -> 1, ..., 10 -> 20)
         label = int(round(score / 0.5))
-
-        # 1. Load audio với sample_rate cho trước
+    
+        # Load audio
         audio, sr = librosa.load(audio_path, sr=self.sample_rate)
-        
-        # Áp dụng augment nếu đang train
+    
+        # Apply augmentation if training
         if self.is_train:
             if random.random() < 0.7:
                 audio = self.noise_aug.augment(audio)[0]
@@ -92,25 +90,28 @@ class SpeakingDataset(data.Dataset):
                 audio = self.speed_aug.augment(audio)[0]
             if random.random() < 0.7:
                 audio = self.pitch_aug.augment(audio)[0]
-            
-        # 2. Cắt audio thành đúng num_chunks cố định
+    
+        # Cut into chunks
         audio_chunks = fixed_chunk_audio(audio, sr, num_chunks=self.num_chunks, chunk_length_sec=self.chunk_length_sec)
-        
-        # 3. Với mỗi chunk: tính log-mel spectrogram và pad/trim về target_length
-        mel_chunks = []
+    
+        # Pad chunks to the same length (needed for batching!)
+        chunk_samples = int(self.chunk_length_sec * self.sample_rate)
+        padded_chunks = []
         for chunk in audio_chunks:
-            min_length = 400
-            if len(chunk) < min_length:
-                pad_length = min_length - len(chunk)
+            if len(chunk) < chunk_samples:
+                pad_length = chunk_samples - len(chunk)
                 chunk = np.pad(chunk, (0, pad_length), mode='constant')
-            mel_chunk = whisper.log_mel_spectrogram(chunk)  # shape: (80, T_chunk)
-            final_mel = pad_or_trim_tensor(mel_chunk, length=self.target_length)  # shape: (80, target_length)
-            mel_chunks.append(final_mel)
-            
-        # Stack các mel của chunk thành tensor có shape (num_chunks, 80, target_length)
-        mel_tensor = torch.stack(mel_chunks)
+            else:
+                chunk = chunk[:chunk_samples]
+            padded_chunks.append(torch.tensor(chunk, dtype=torch.float32))  # Wav2Vec2 expects float32
+    
+        # Stack into tensor: shape (num_chunks, chunk_samples)
+        audio_tensor = torch.stack(padded_chunks)
+    
         label_tensor = torch.tensor(label, dtype=torch.long)
-        return mel_tensor, label_tensor, transcript
+
+        return audio_tensor, label_tensor, transcript
+
 
 def collate_fn(batch):
     """
@@ -121,8 +122,8 @@ def collate_fn(batch):
       - labels_tensor: Tensor shape (batch_size,)
       - texts_list: List các string, độ dài = batch_size
     """
-    mels, labels, texts = zip(*batch)
-    mels_tensor = torch.stack(mels, dim=0)
+    audios, labels, texts = zip(*batch)
+    audios_tensor = torch.stack(audios, dim=0)
     labels_tensor = torch.stack(labels, dim=0)
     texts_list = list(texts)
-    return mels_tensor, labels_tensor, texts_list
+    return audios_tensor, labels_tensor, texts_list

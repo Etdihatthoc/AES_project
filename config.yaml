@@ -1,4 +1,5 @@
-project: "whisper_score_training"
+project: "wav2vec2_score_training"
+model_id: "facebook/wav2vec2-base-960h"
 num_epochs: 20
 batch_size: 1
 learning_rate: 0.00001
@@ -7,7 +8,6 @@ early_stop_patience: 5
 warmup_epochs: 1
 csv_file: "/mnt/disk1/SonDinh/SonDinh/AES_project/tools/output.csv"
 sample_rate: 16000
-model_size: "small.en"
 num_workers: 40
 checkpoint_path: "ckpt/ckpt_pronunciation/ckpt_SWA_pronunciation_newmodel.pth"
 log_file: "log/log_pronunciation/train_SWA_pronunciation_newmodel.log"
