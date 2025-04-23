@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import BertTokenizer, BertModel, Wav2Vec2Model
+from transformers import BertTokenizer, BertModel, Wav2Vec2Model, DistilBertTokenizer, DistilBertModel
 
 class MultimodalWav2VecScoreModel(nn.Module):
     def __init__(self, audio_encoder_id = "facebook/wav2vec2-base-960h", text_model_name='bert-base-uncased', d_fuse=256, num_classes=21):
@@ -109,3 +109,36 @@ class MultimodalWav2VecScoreModel(nn.Module):
         # --- Prediction ---
         logits = self.fc(fused_vector)  # (batch, num_classes)
         return logits
+
+def main(): 
+    # Example usage
+    model = MultimodalWav2VecScoreModel()
+    
+    # # Dummy data
+    # batch_size = 1
+    # num_chunks = 1
+    # waveform_len = 480000  # Ví dụ: 1 giây âm thanh với tần số mẫu 16kHz
+    # mels = torch.randn(batch_size, num_chunks, waveform_len)
+    # text = ["Second of all, have I ever travelled alone? No, I've travelled with my friends. Sometimes I've travelled with my family and with my good friends."]
+    # # Forward pass
+    # logits = model(mels, text)
+    # print(nn.functional.softmax(logits))   # Expected output: (batch_size, num_classes)
+    from dataloader import ChunkedSpeakingDataset, collate_fn
+    from torch.utils.data import DataLoader
+    from transformers import Wav2Vec2Processor
+    
+    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+    dataset = ChunkedSpeakingDataset(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
+                                     timestamp_folder='audio_chunks',
+                                     processor=processor)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
+
+    for batch in dataloader:
+        audio_tensor, label_tensor, texts_list = batch
+        print(audio_tensor, label_tensor, texts_list)
+        logits = model(audio_tensor, texts_list)
+        print(nn.functional.softmax(logits))
+        break 
+
+if __name__ == "__main__":
+    main()
