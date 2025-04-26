@@ -14,7 +14,8 @@ from dataloader import SpeakingDataset, collate_fn, ChunkedSpeakingDataset
 from model_new import MultimodalWav2VecScoreModel
 from transformers import get_linear_schedule_with_warmup, Wav2Vec2Processor
 from CELoss import SoftLabelCrossEntropyLoss
-import bitsandbytes as bnb
+from tqdm.auto import tqdm
+
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -50,9 +51,9 @@ def evaluate(model, data_loader, criterion, device):
     running_loss = 0.0
     running_mae = 0.0
     with torch.no_grad():
-        for mels, labels, texts in data_loader:
+        for mels, labels, texts in tqdm(data_loader):
             
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 logits = model(mels.to(device), texts)
                 loss = criterion(logits, labels.to(device))
                 
@@ -60,8 +61,8 @@ def evaluate(model, data_loader, criterion, device):
             total_samples += mels.size(0)
             
             preds = torch.argmax(logits, dim=1)
-            preds_scores = preds.float() * 0.5
-            true_scores = labels.float() * 0.5
+            preds_scores = preds.to(device).float() * 0.5
+            true_scores = labels.to(device).float() * 0.5
             mae = torch.abs(preds_scores - true_scores).mean().item()
             running_mae += mae * mels.size(0)
             
@@ -99,7 +100,7 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
     wandb.init(project=project, config=config)
     wandb.watch(model, log="all")
     
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     # Các list lưu các metric qua từng epoch để vẽ biểu đồ
     epoch_list = []
@@ -113,13 +114,11 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
         running_loss = 0.0
         for i, (mels, labels, texts) in enumerate(train_loader):
             model.train()
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 optimizer.zero_grad()
                 logits = model(mels.to(device), texts)
-                logits = torch.nn.functional.softmax(logits)
                 loss = criterion(logits, labels.to(device))
                 
-            print(logits[0], labels[0]) # Print logits và labels để kiểm tra
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
@@ -148,6 +147,7 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
         train_loss = running_loss / total_samples
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
+        
         
         val_loss, val_mae = evaluate(model,  val_loader, criterion, device)
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] validation completed. Avg Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
@@ -310,7 +310,7 @@ def main():
     other_params = [param for name, param in model.named_parameters() 
                     if not (name.startswith("audio_encoder") or name.startswith("text_encoder"))]
 
-    optimizer = bnb.optim.AdamW([
+    optimizer = optim.AdamW([
         {'params': encoder_params, 'lr': encoder_lr, 'weight_decay': 1e-2},
         {'params': other_params, 'lr': learning_rate, 'weight_decay': 1e-2}
     ])

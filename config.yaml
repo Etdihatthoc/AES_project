@@ -1,14 +1,14 @@
 project: "wav2vec2_score_training"
-audio_encoder_id: "facebook/wav2vec2-base-960h"
-num_epochs: 1
-batch_size: 4
+audio_encoder_id: "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+num_epochs: 2
+batch_size: 1
 learning_rate: 0.00001
-encoder_lr: 0.000001      # Learning rate cho encoder (Whisper và DistilBERT)
+encoder_lr: 0.000003      # Learning rate cho encoder (Whisper và DistilBERT)
 early_stop_patience: 5
 warmup_epochs: 1
 csv_file: "/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv"
 sample_rate: 16000
 num_workers: 40
-checkpoint_path: "ckpt/ckpt_pronunciation/ckpt_SWA_pronunciation_newmodel.pth"
-log_file: "log/log_pronunciation/train_SWA_pronunciation_newmodel.log"
+checkpoint_path: "ckpt/ckpt_pronunciation/ckpt_SWA_pronunciation_wav2vec2model.pth"
+log_file: "log/log_pronunciation/train_SWA_pronunciation_wav2vec2model.log"
 istrain: true

@@ -79,6 +79,7 @@ class MultimodalWav2VecScoreModel(nn.Module):
         audio_features = self.audio_proj(audio_features)  # (batch, num_chunks, d_fuse)
         audio_features = self.audio_norm(audio_features)
         
+        
         # --- Text Branch ---
         inputs = self.text_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(audio_features.device) for k, v in inputs.items()}

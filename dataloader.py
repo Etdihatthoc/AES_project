@@ -202,8 +202,8 @@ class ChunkedSpeakingDataset(data.Dataset):
                 chunks = json.load(f)
 
             for chunk in chunks:
-                if not chunk["transcript_text"].strip():
-                    continue  # skip empty transcript
+                # if not chunk["transcript_text"].strip():
+                #     continue  # skip empty transcript
                 self.df.append({
                     "audio_path": audio_path,
                     "pronunciation": score,
@@ -277,6 +277,9 @@ def main():
     dataset = ChunkedSpeakingDataset(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
                                      timestamp_folder='audio_chunks',
                                      processor=processor)
+    # score = dataset.df['pronunciation']
+    # print(score.value_counts())
+    # print(dataset.df_info['pronunciation'].unique())
     dataloader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
 
     for batch in dataloader:

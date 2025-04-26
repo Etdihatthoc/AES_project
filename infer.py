@@ -9,8 +9,10 @@ import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
-from dataloader import SpeakingDataset, collate_fn  # Sử dụng collate_fn_eval cho infer (mỗi sample là list các chunk)
-from model import MultimodalWhisperScoreModel  # Sử dụng model này theo yêu cầu
+from transformers import Wav2Vec2Processor
+from dataloader import SpeakingDataset, ChunkedSpeakingDataset, collate_fn  # Sử dụng collate_fn_eval cho infer (mỗi sample là list các chunk)
+# from model import MultimodalWhisperScoreModel  # Sử dụng model này theo yêu cầu
+from model_new import MultimodalWav2VecScoreModel
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -120,13 +122,12 @@ def main():
     
     # Lấy các tham số từ config
     csv_file = config["csv_file"]
-    model_size = config["model_size"]
     batch_size = config["batch_size"]
+    audio_encoder_id = config["audio_encoder_id"]
     sample_rate = config["sample_rate"]
-    num_workers = config["num_workers"]
     checkpoint_path = config["checkpoint_path"]
     log_file = config["log_file"]
-    model_size = config["model_size"]
+    num_workers = config["num_workers"]
     
     # Cấu hình logger: ghi log vào file và console
     logging.basicConfig(
@@ -141,11 +142,14 @@ def main():
     print("Device:", device)
     logger.info(f"Device: {device}")
     
+    timestamp_folder = 'audio_chunks'
+    processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     # Load dataset
     # Tạo dataset cho train với augment, và cho val/test không augment
-    train_dataset = SpeakingDataset(csv_file=csv_file, sample_rate=sample_rate, is_train=True)
-    val_dataset = SpeakingDataset(csv_file=csv_file, sample_rate=sample_rate, is_train=False)
-    test_dataset = SpeakingDataset(csv_file=csv_file, sample_rate=sample_rate, is_train=False)
+    # Khởi tạo dataset
+    train_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=True)
+    val_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=False)
+    test_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=False)
     
     print("Số video trong dataset:", len(train_dataset))
     
@@ -177,7 +181,7 @@ def main():
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
     
     # Khởi tạo model và đưa vào device
-    model = MultimodalWhisperScoreModel(whisper_model_size=model_size, text_model_name='bert-base-uncased')
+    model = MultimodalWav2VecScoreModel(audio_encoder_id=audio_encoder_id)
     print("hidden_dim:", model.fc[0].in_features)
     model.to(device)
     
