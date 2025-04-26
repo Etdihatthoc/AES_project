@@ -105,29 +105,28 @@ class SpeakingDataset(data.Dataset):
         for i in range(len(audio_chunks)):
             print (f"Shape of audio chunk {i}: {audio_chunks[i].shape}")
             inputs = processor(audio_chunks[i], sampling_rate=self.sample_rate, return_tensors="pt")
-            with torch.no_grad():
-                features = model(inputs.input_values)
-            print(f"Shape of embedding vec: {features}")
-            audio_chunks[i] = features
+            audio_chunks[i] = inputs.input_values.squeeze(0)  # Chuyển về tensor 1 chiều (80, T)
+            audio_chunks[i] = pad_or_trim_tensor(audio_chunks[i], length=self.target_length)
+            print (f"Shape of audio chunk {i} after padding: {audio_chunks[i].shape}")
     
         # Pad chunks to the same length (needed for batching!)
         chunk_samples = int(self.chunk_length_sec * self.sample_rate)
         padded_chunks = []
         for chunk in audio_chunks:
-            # min_length = 400 
-            # if len(chunk) < chunk_samples:
-            #     pad_length = chunk_samples - len(chunk)
-            #     chunk = np.pad(chunk, (0, pad_length), mode='constant')
-            # else:
-            #     chunk = chunk[:chunk_samples]
+            min_length = 400 
+            if len(chunk) < chunk_samples:
+                pad_length = chunk_samples - len(chunk)
+                chunk = np.pad(chunk, (0, pad_length), mode='constant')
+            else:
+                chunk = chunk[:chunk_samples]
             padded_chunks.append(chunk.to(torch.float32))  # Wav2Vec2 expects float32
     
-        # # Stack into tensor: shape (num_chunks, chunk_samples)
-        # audio_tensor = torch.stack(padded_chunks)
+        # Stack into tensor: shape (num_chunks, chunk_samples)
+        audio_tensor = torch.stack(padded_chunks)
     
         label_tensor = torch.tensor(label, dtype=torch.long)
 
-        return padded_chunks, label_tensor, transcript
+        return audio_tensor, label_tensor, transcript
 
 
 # def collate_fn(batch):
