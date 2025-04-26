@@ -9,7 +9,6 @@ from transformers import Wav2Vec2Processor, Wav2Vec2FeatureExtractor
 import os
 import json
 
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
 # model = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-base-960h")
 
 def fixed_chunk_audio(audio, sr, num_chunks=10, chunk_length_sec=30):
@@ -48,8 +47,8 @@ def pad_or_trim_tensor(tensor, length=3000):
     else:
         return tensor[:, :length]
 
-class SpeakingDataset(data.Dataset):
-    def __init__(self, csv_file, sample_rate=16000, chunk_length_sec=30, target_length=3000, num_chunks=10, is_train=True):
+class SpeakingDatasetWav2Vec2(data.Dataset):
+    def __init__(self, csv_file, processor, sample_rate=16000, chunk_length_sec=30, target_length=3000, num_chunks=10, is_train=True):
         """
         csv_file: Đường dẫn file CSV chứa các cột 'absolute_path', 'pronunciation' và 'text'
         sample_rate: Tốc độ mẫu của audio (16kHz)
@@ -67,6 +66,7 @@ class SpeakingDataset(data.Dataset):
         self.target_length = target_length
         self.num_chunks = num_chunks
         self.is_train = is_train
+        self.processor = processor
         
         # Khởi tạo các augmenter (áp dụng với xác suất 50% nếu is_train)
         self.noise_aug = naa.NoiseAug(name='NoiseAug')
@@ -103,11 +103,11 @@ class SpeakingDataset(data.Dataset):
         audio_chunks = fixed_chunk_audio(audio, sr, num_chunks=self.num_chunks, chunk_length_sec=self.chunk_length_sec)
         
         for i in range(len(audio_chunks)):
-            print (f"Shape of audio chunk {i}: {audio_chunks[i].shape}")
-            inputs = processor(audio_chunks[i], sampling_rate=self.sample_rate, return_tensors="pt")
+            # print (f"Shape of audio chunk {i}: {audio_chunks[i].shape}")
+            inputs = self.processor(audio_chunks[i], sampling_rate=self.sample_rate, return_tensors="pt")
             audio_chunks[i] = inputs.input_values.squeeze(0)  # Chuyển về tensor 1 chiều (80, T)
-            audio_chunks[i] = pad_or_trim_tensor(audio_chunks[i], length=self.target_length)
-            print (f"Shape of audio chunk {i} after padding: {audio_chunks[i].shape}")
+            # audio_chunks[i] = pad_or_trim_tensor(audio_chunks[i], length=self.target_length)
+            # print (f"Shape of audio chunk {i} after padding: {audio_chunks[i].shape}")
     
         # Pad chunks to the same length (needed for batching!)
         chunk_samples = int(self.chunk_length_sec * self.sample_rate)
@@ -273,8 +273,9 @@ class ChunkedSpeakingDataset(data.Dataset):
 
 def main():
     # Example usage
-    dataset = ChunkedSpeakingDataset(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
-                                     timestamp_folder='audio_chunks',
+    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+    
+    dataset = SpeakingDatasetWav2Vec2(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
                                      processor=processor)
     # score = dataset.df['pronunciation']
     # print(score.value_counts())
@@ -283,7 +284,8 @@ def main():
 
     for batch in dataloader:
         audio_tensor, label_tensor, texts_list = batch
-        print(audio_tensor, label_tensor, texts_list)
+        # print(audio_tensor, label_tensor, texts_list)
+        print(f"Audio tensor shape: {audio_tensor.shape}")
         break 
 
 if __name__ == "__main__":

@@ -60,19 +60,19 @@ class MultimodalWav2VecScoreModel(nn.Module):
             nn.Linear(d_fuse, num_classes)
         )
     
-    def forward(self, mels, text):
+    def forward(self, audio, text):
         """
         Args:
-            mels: Tensor có shape (batch, num_chunks, 80, target_length)
+            audio: Tensor có shape (batch, num_chunks, target_length)
             text: List các chuỗi văn bản (batch_size strings)
         Returns:
             logits: Tensor dự đoán logits cho các lớp (batch, num_classes)
         """
-        batch_size, num_chunks, waveform_len = mels.shape
-        mels = mels.view(batch_size * num_chunks, waveform_len)
+        batch_size, num_chunks, waveform_len = audio.shape
+        audio = audio.view(batch_size * num_chunks, waveform_len)
         # --- Audio Branch ---
         audio_encoder_out = self.audio_encoder(
-            input_values=mels
+            input_values=audio
         )
         audio_features = audio_encoder_out.last_hidden_state.mean(dim=1)  # Mean pooling theo thời gian
         audio_features = audio_features.view(batch_size, num_chunks, self.audio_hidden_dim)
@@ -119,10 +119,10 @@ def main():
     # batch_size = 1
     # num_chunks = 1
     # waveform_len = 480000  # Ví dụ: 1 giây âm thanh với tần số mẫu 16kHz
-    # mels = torch.randn(batch_size, num_chunks, waveform_len)
+    # audio = torch.randn(batch_size, num_chunks, waveform_len)
     # text = ["Second of all, have I ever travelled alone? No, I've travelled with my friends. Sometimes I've travelled with my family and with my good friends."]
     # # Forward pass
-    # logits = model(mels, text)
+    # logits = model(audio, text)
     # print(nn.functional.softmax(logits))   # Expected output: (batch_size, num_classes)
     from dataloader import ChunkedSpeakingDataset, collate_fn
     from torch.utils.data import DataLoader
