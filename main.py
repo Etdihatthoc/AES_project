@@ -1,7 +1,5 @@
 import torch
 import torch.optim as optim
-import torch.nn as nn
-from torch.optim.lr_scheduler import CyclicLR
 from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 import random
 import logging
@@ -10,7 +8,7 @@ import numpy as np
 import wandb
 import yaml
 from sklearn.model_selection import train_test_split
-from dataloader import SpeakingDataset, collate_fn, ChunkedSpeakingDataset
+from dataloader import SpeakingDatasetWav2Vec2, collate_fn, ChunkedSpeakingDataset
 from model_new import MultimodalWav2VecScoreModel
 from transformers import get_linear_schedule_with_warmup, Wav2Vec2Processor
 from CELoss import SoftLabelCrossEntropyLoss
@@ -244,16 +242,16 @@ def main():
     timestamp_folder = 'audio_chunks'
     processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     # Khởi tạo dataset
-    train_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=True)
-    val_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=False)
-    test_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=False)
+    train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
+    val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    test_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
     
         
     print("Số video trong dataset:", len(train_dataset))
     
     # Chia dữ liệu theo stratify dựa trên nhãn pronunciation
     df = train_dataset.df
-    labels = df['pronunciation']
+    labels= df['pronunciation'].apply(lambda s: int(round(s / 0.5))).values
     indices = np.arange(len(train_dataset))
 
     train_idx, temp_idx = train_test_split(

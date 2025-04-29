@@ -13,9 +13,8 @@ class MultimodalWav2VecScoreModel(nn.Module):
         super(MultimodalWav2VecScoreModel, self).__init__()
         
         # --- Audio Encoder ---
-        wav2vec = Wav2Vec2Model.from_pretrained(audio_encoder_id)
-        self.audio_encoder = wav2vec
-        self.audio_hidden_dim = wav2vec.config.output_hidden_size  # Ví dụ: 768
+        self.audio_encoder = Wav2Vec2Model.from_pretrained(audio_encoder_id)
+        self.audio_hidden_dim = self.audio_encoder.config.output_hidden_size  # Ví dụ: 768
         
         # --- Text Encoder ---
         self.text_tokenizer = BertTokenizer.from_pretrained(text_model_name)
@@ -69,13 +68,20 @@ class MultimodalWav2VecScoreModel(nn.Module):
             logits: Tensor dự đoán logits cho các lớp (batch, num_classes)
         """
         batch_size, num_chunks, waveform_len = audio.shape
-        audio = audio.view(batch_size * num_chunks, waveform_len)
+        # audio = audio.view(batch_size * num_chunks, waveform_len)
         # --- Audio Branch ---
-        audio_encoder_out = self.audio_encoder(
-            input_values=audio
-        )
-        audio_features = audio_encoder_out.last_hidden_state.mean(dim=1)  # Mean pooling theo thời gian
-        audio_features = audio_features.view(batch_size, num_chunks, self.audio_hidden_dim)
+        audio_encoder_out = []
+        for i in range(num_chunks):
+            # print(f"audio_chunk shape: {audio[:, i, :].shape}")
+            audio_i_encoder_out = self.audio_encoder(
+                input_values=audio[:, i, :].to(self.audio_encoder.device)
+            ).to('cpu')  # (batch, 1, audio_hidden_dim)
+            audio_encoder_out.append(audio_i_encoder_out.last_hidden_state.mean(dim=1))  # (batch, 1, audio_hidden_dim)
+        audio_encoder_out = torch.stack(audio_encoder_out, dim=1)  # (batch, num_chunks, audio_hidden_dim)
+        # print(f"audio_encoder_out shape: {audio_encoder_out.shape}")
+        # audio_features = audio_encoder_out.mean(dim=1)  # Mean pooling theo thời gian
+        # print(f"audio_features shape: {audio_features.shape}")
+        audio_features = audio_encoder_out.view(batch_size, num_chunks, self.audio_hidden_dim)
         audio_features = self.audio_proj(audio_features)  # (batch, num_chunks, d_fuse)
         audio_features = self.audio_norm(audio_features)
         
@@ -124,21 +130,19 @@ def main():
     # # Forward pass
     # logits = model(audio, text)
     # print(nn.functional.softmax(logits))   # Expected output: (batch_size, num_classes)
-    from dataloader import ChunkedSpeakingDataset, collate_fn
+    from dataloader import ChunkedSpeakingDataset, collate_fn, SpeakingDatasetWav2Vec2
     from torch.utils.data import DataLoader
     from transformers import Wav2Vec2Processor
     
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
-    dataset = ChunkedSpeakingDataset(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
-                                     timestamp_folder='audio_chunks',
+    dataset = SpeakingDatasetWav2Vec2(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
                                      processor=processor)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
 
     for batch in dataloader:
         audio_tensor, label_tensor, texts_list = batch
-        print(audio_tensor, label_tensor, texts_list)
         logits = model(audio_tensor, texts_list)
-        print(nn.functional.softmax(logits))
+        print(f"Logits shape: {logits.shape}")
         break 
 
 if __name__ == "__main__":

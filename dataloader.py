@@ -277,15 +277,12 @@ def main():
     
     dataset = SpeakingDatasetWav2Vec2(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
                                      processor=processor)
-    # score = dataset.df['pronunciation']
-    # print(score.value_counts())
-    # print(dataset.df_info['pronunciation'].unique())
     dataloader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
 
     for batch in dataloader:
         audio_tensor, label_tensor, texts_list = batch
-        # print(audio_tensor, label_tensor, texts_list)
-        print(f"Audio tensor shape: {audio_tensor.shape}")
+        print(label_tensor)
+        # print(f"Audio tensor shape: {audio_tensor.shape}")
         break 
 
 if __name__ == "__main__":
