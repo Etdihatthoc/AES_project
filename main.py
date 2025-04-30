@@ -52,7 +52,7 @@ def evaluate(model, data_loader, criterion, device):
         for mels, labels, texts in tqdm(data_loader):
             
             with torch.amp.autocast('cuda'):
-                logits = model(mels.to(device), texts)
+                logits = model(mels, texts)
                 loss = criterion(logits, labels.to(device))
                 
             running_loss += loss.item() * mels.size(0)
@@ -114,7 +114,7 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
             model.train()
             with torch.amp.autocast('cuda'):
                 optimizer.zero_grad()
-                logits = model(mels.to(device), texts)
+                logits = model(mels, texts)
                 loss = criterion(logits, labels.to(device))
                 
             scaler.scale(loss).backward()
@@ -251,7 +251,7 @@ def main():
     
     # Chia dữ liệu theo stratify dựa trên nhãn pronunciation
     df = train_dataset.df
-    labels= df['pronunciation'].apply(lambda s: int(round(s / 0.5))).values
+    labels= df['pronunciation'].apply(lambda s: int(round(s / 0.5)))
     indices = np.arange(len(train_dataset))
 
     train_idx, temp_idx = train_test_split(
@@ -290,7 +290,7 @@ def main():
     
     # Tính class weights cho tập train
     # train_scores = df.iloc[train_idx]['pronunciation'].apply(lambda s: int(round(s / 0.5))).values
-    train_scores = df.iloc[train_idx]['pronunciation'].values
+    train_scores = labels.iloc[train_idx].values
     class_weights = compute_class_weights(train_scores, num_classes=21)
     print("Class Weights:", class_weights)
     
@@ -300,7 +300,7 @@ def main():
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     
-    model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id)
+    model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id, device = device)
     print("Model created. Fusion dimension =", model.fc[0].in_features)
     
     # Phân nhóm tham số

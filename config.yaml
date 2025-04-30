@@ -1,7 +1,7 @@
 project: "wav2vec2_score_training"
 audio_encoder_id: "jonatasgrosman/wav2vec2-large-xlsr-53-english"
-num_epochs: 2
-batch_size: 1
+num_epochs: 10
+batch_size: 2
 learning_rate: 0.00001
 encoder_lr: 0.000003      # Learning rate cho encoder (Whisper và DistilBERT)
 early_stop_patience: 5
