@@ -7,10 +7,11 @@ import os
 import numpy as np
 import pandas as pd
 import yaml
+from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from transformers import Wav2Vec2Processor
-from dataloader import SpeakingDataset, ChunkedSpeakingDataset, collate_fn  # Sử dụng collate_fn_eval cho infer (mỗi sample là list các chunk)
+from dataloader import SpeakingDatasetWav2Vec2, ChunkedSpeakingDataset, collate_fn  # Sử dụng collate_fn_eval cho infer (mỗi sample là list các chunk)
 # from model import MultimodalWhisperScoreModel  # Sử dụng model này theo yêu cầu
 from model_new import MultimodalWav2VecScoreModel
 
@@ -34,18 +35,19 @@ def evaluate(model, data_loader, device):
     ground_truths = []
 
     with torch.no_grad():
-        for mels, scores, texts in data_loader:
+        for audios, scores, texts in tqdm(data_loader):
         
-            mels = mels.to(device, non_blocking=True)
-            scores = scores.to(device, non_blocking=True)
-            outputs = model(mels, texts)
+            # audios = audios.to(device, non_blocking=True)
+            # scores = scores.to(device, non_blocking=True)
+            outputs = model(audios, texts)
             
             preds = torch.argmax(outputs, dim=1)
             preds_scores = preds.float() * 0.5
-            true_scores = scores.float() * 0.5
+            true_scores = scores.to(device).float() * 0.5
             
-            predictions.append(preds_scores.item())
-            ground_truths.append(true_scores.item())
+            for pred, true in zip(preds_scores, true_scores):
+                predictions.append(pred.item())
+                ground_truths.append(true.item())
             
     return predictions, ground_truths
 
@@ -139,6 +141,7 @@ def main():
     logger = logging.getLogger()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = 'cpu'
     print("Device:", device)
     logger.info(f"Device: {device}")
     
@@ -147,9 +150,9 @@ def main():
     # Load dataset
     # Tạo dataset cho train với augment, và cho val/test không augment
     # Khởi tạo dataset
-    train_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=True)
-    val_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=False)
-    test_dataset = ChunkedSpeakingDataset(csv_file = csv_file, timestamp_folder=timestamp_folder, processor=processor, sample_rate=sample_rate, is_train=False)
+    train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
+    val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    test_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
     
     print("Số video trong dataset:", len(train_dataset))
     
@@ -181,35 +184,35 @@ def main():
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
     
     # Khởi tạo model và đưa vào device
-    model = MultimodalWav2VecScoreModel(audio_encoder_id=audio_encoder_id)
+    model = MultimodalWav2VecScoreModel(audio_encoder_id=audio_encoder_id, device=device)
     print("hidden_dim:", model.fc[0].in_features)
-    model.to(device)
+    model.to_device(device)
     
-    # load ckpt base on SWA
+    # # load ckpt base on SWA
     # avg_state_dict, selected_epochs = weighted_average_checkpoint("/home/user01/aiotlab/sondinh/AES_project/multimodal_classification/SaveCKPT_classification.pth", loss_threshold=0.75)
     # model.load_state_dict(avg_state_dict)
     # print("Weighted average checkpoint loaded from epochs:", selected_epochs)
     
     
-    # checkpoint_path = "SaveCKPT_classification.pth"
+    checkpoint_path = "SaveCKPT_classification.pth"
 
-    # # Load toàn bộ dictionary checkpoint
-    # ckpt_dict = torch.load(checkpoint_path)
+    # Load toàn bộ dictionary checkpoint
+    ckpt_dict = torch.load(checkpoint_path)
 
-    # # Lấy model_state_dict của epoch 7
-    # epoch = 7
-    # if str(epoch) in ckpt_dict:
-    #     model_state_dict_epoch7 = ckpt_dict[str(epoch)]['model_state_dict']
-    #     print(f"Đã load model_state_dict của epoch {epoch}")
+    # Lấy model_state_dict của epoch 10
+    epoch = 10 
+    if str(epoch) in ckpt_dict:
+        model_state_dict_epoch = ckpt_dict[str(epoch)]['model_state_dict']
+        print(f"Đã load model_state_dict của epoch {epoch}")
     
-    # model.load_state_dict(model_state_dict_epoch7)
-    # print("Checkpoint loaded from:", checkpoint_path)
-    
-    # Load checkpoint từ checkpoint_path
-    ckpt = torch.load(checkpoint_path, map_location='cpu')
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(model_state_dict_epoch)
     print("Checkpoint loaded from:", checkpoint_path)
-    logger.info(f"Checkpoint loaded from: {checkpoint_path}")
+    
+    # # Load checkpoint từ checkpoint_path
+    # ckpt = torch.load(checkpoint_path)
+    # model.load_state_dict(ckpt['model_state_dict'])
+    # print("Checkpoint loaded from:", checkpoint_path)
+    # logger.info(f"Checkpoint loaded from: {checkpoint_path}")
     
     # Evaluate model
     predictions, ground_truths = evaluate(model, test_loader, device)
