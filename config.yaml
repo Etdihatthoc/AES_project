@@ -10,5 +10,5 @@ csv_file: "/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv"
 sample_rate: 16000
 num_workers: 40
 checkpoint_path: "ckpt/ckpt_pronunciation/ckpt_SWA_pronunciation_wav2vec2model.pth"
-log_file: "log/log_pronunciation/train_SWA_pronunciation_wav2vec2model.log"
+log_file: "log/log_pronunciation/infer_SWA_pronunciation_wav2vec2model.log"
 istrain: true
