@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report, mean_absolute_error, mean_squared_error, r2_score
 
 # Load the CSV file (đảm bảo đường dẫn file là chính xác)
-data = pd.read_csv('test.csv')
+data = pd.read_csv('results_pronunciation.csv')
 
 # Tạo mảng nhãn từ 1 đến 10 với bước 0.5 (sử dụng trong classification)
 numeric_labels = np.arange(1, 10.5, 0.5)
@@ -39,7 +39,7 @@ for i in range(cm.shape[0]):
                  color="white" if cm[i, j] > thresh else "black")
 
 plt.tight_layout()
-plt.savefig('confusion_matrix_augment_newloss_test.png')
+plt.savefig('confusion_matrix_newloss_test.png')
 plt.close()
 
 # Tính các chỉ số regression cho toàn bộ dữ liệu (nếu cần)

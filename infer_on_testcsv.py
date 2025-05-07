@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import random
 import logging
 import os
@@ -8,12 +8,12 @@ import numpy as np
 import pandas as pd
 import yaml
 from tqdm.auto import tqdm
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from transformers import Wav2Vec2Processor
-from dataloader import SpeakingDatasetWav2Vec2, ChunkedSpeakingDataset, collate_fn  # Sử dụng collate_fn_eval cho infer (mỗi sample là list các chunk)
-# from model import MultimodalWhisperScoreModel  # Sử dụng model này theo yêu cầu
+from dataloader import SpeakingDatasetWav2Vec2, collate_fn  # Sử dụng collate_fn_eval cho infer (mỗi sample là list các chunk)
 from model_new import MultimodalWav2VecScoreModel
+
+import argparse
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -80,7 +80,7 @@ def weighted_average_checkpoint(ckpt_path, loss_threshold=0.4):
         avg_state_dict (dict): State dict trung bình trọng số.
         selected_epochs (list): Danh sách các epoch được sử dụng trong tính toán.
     """
-    ckpt_dict = torch.load(ckpt_path, map_location='cpu')
+    ckpt_dict = torch.load(ckpt_path)
     selected_ckpts = {}
     for epoch, ckpt in ckpt_dict.items():
         # Kiểm tra ckpt có phải là dictionary và có key 'loss'
@@ -117,7 +117,11 @@ def weighted_average_checkpoint(ckpt_path, loss_threshold=0.4):
 
 def main():
     # Đọc config từ file YAML
-    with open("config.yaml", "r") as f:
+    parser = argparse.ArgumentParser(description="Inference on test CSV")
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file')
+    parser.add_argument('--ckptpath', type=str, default="SaveCKPT_classification.pth", help='Path to the checkpoint file')
+    args = parser.parse_args()
+    with open(args.config, "r") as f:
         config = yaml.safe_load(f)
     
     seed_everything(42)
@@ -149,39 +153,39 @@ def main():
     processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     # Load dataset
     # Tạo dataset cho train với augment, và cho val/test không augment
-    # Khởi tạo dataset
-    train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
-    val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    # # Khởi tạo dataset
+    # train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
+    # val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
     test_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
     
-    print("Số video trong dataset:", len(train_dataset))
+    # print("Số video trong dataset:", len(test_dataset))
     
-    # Chia dữ liệu theo stratify dựa trên nhãn pronunciation (giả sử các nhãn đã được làm tròn theo bước 0.5)
-    df = train_dataset.df
-    labels = df['pronunciation']
-    indices = np.arange(len(train_dataset))
+    # # Chia dữ liệu theo stratify dựa trên nhãn pronunciation (giả sử các nhãn đã được làm tròn theo bước 0.5)
+    # df = train_dataset.df
+    # labels = df['pronunciation']
+    # indices = np.arange(len(train_dataset))
 
-    train_idx, temp_idx = train_test_split(
-        indices,
-        test_size=0.3,
-        stratify=labels,
-        random_state=42
-    )
-    temp_labels = labels.iloc[temp_idx]
-    val_idx, test_idx = train_test_split(
-        temp_idx,
-        test_size=2/3,
-        stratify=temp_labels,
-        random_state=42
-    )
+    # train_idx, temp_idx = train_test_split(
+    #     indices,
+    #     test_size=0.3,
+    #     stratify=labels,
+    #     random_state=42
+    # )
+    # temp_labels = labels.iloc[temp_idx]
+    # val_idx, test_idx = train_test_split(
+    #     temp_idx,
+    #     test_size=2/3,
+    #     stratify=temp_labels,
+    #     random_state=42
+    # )
 
-    test_set = Subset(test_dataset, test_idx)
+    # test_set = Subset(test_dataset, test_idx)
     
-    print("Số video trong test:", len(test_set))
-    logger.info(f"Số video trong test: {len(test_set)}")
+    print("Số video trong test:", len(test_dataset))
+    logger.info(f"Số video trong test: {len(test_dataset)}")
     
     # Tạo DataLoader cho tập test sử dụng collate_fn_eval
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
     
     # Khởi tạo model và đưa vào device
     model = MultimodalWav2VecScoreModel(audio_encoder_id=audio_encoder_id, device=device)
@@ -194,7 +198,7 @@ def main():
     # print("Weighted average checkpoint loaded from epochs:", selected_epochs)
     
     
-    checkpoint_path = "SaveCKPT_classification.pth"
+    checkpoint_path = args.ckptpath
 
     # Load toàn bộ dictionary checkpoint
     ckpt_dict = torch.load(checkpoint_path)

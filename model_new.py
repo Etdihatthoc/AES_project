@@ -1,9 +1,10 @@
+import gc
 import torch
 import torch.nn as nn
-from transformers import BertTokenizer, BertModel, Wav2Vec2Model
+from transformers import BertTokenizer, BertModel, Wav2Vec2Model, DistilBertTokenizer, DistilBertModel
 
 class MultimodalWav2VecScoreModel(nn.Module):
-    def __init__(self, audio_encoder_id = "facebook/wav2vec2-base-960h", text_model_name='bert-base-uncased', d_fuse=256, num_classes=21):
+    def __init__(self, audio_encoder_id = "facebook/wav2vec2-base-960h", text_model_name='bert-base-uncased', d_fuse=256, num_classes=21, device='cpu'):
         """
         whisper_model_size: Kích thước của model Whisper (tiny, base, small, ...)
         text_model_name: Tên của DistilBERT model từ HuggingFace
@@ -11,11 +12,10 @@ class MultimodalWav2VecScoreModel(nn.Module):
         num_classes: Số lớp của bài toán classification (mặc định 21, tương ứng với 0, 0.5, ..., 10)
         """
         super(MultimodalWav2VecScoreModel, self).__init__()
-        
+        self.device = device
         # --- Audio Encoder ---
-        wav2vec = Wav2Vec2Model.from_pretrained(audio_encoder_id)
-        self.audio_encoder = wav2vec
-        self.audio_hidden_dim = wav2vec.config.output_hidden_size  # Ví dụ: 768
+        self.audio_encoder = Wav2Vec2Model.from_pretrained(audio_encoder_id)
+        self.audio_hidden_dim = self.audio_encoder.config.output_hidden_size  # Ví dụ: 768
         
         # --- Text Encoder ---
         self.text_tokenizer = BertTokenizer.from_pretrained(text_model_name)
@@ -59,22 +59,56 @@ class MultimodalWav2VecScoreModel(nn.Module):
             #nn.Dropout(p=0.1),
             nn.Linear(d_fuse, num_classes)
         )
+        
+        self.to(device)
     
-    def forward(self, mels, text):
+    def to_device(self, device):
+        """
+        Chuyển model sang device (CPU hoặc GPU)
+        """
+        self.audio_encoder.to(device)
+        self.text_encoder.to(device)
+        self.audio_proj.to(device)
+        self.audio_norm.to(device)
+        self.text_proj.to(device)
+        self.text_norm.to(device)
+        self.A2T.to(device)
+        self.a2t_norm.to(device)
+        self.T2A.to(device)
+        self.t2a_norm.to(device)
+        self.audiosefl.to(device)
+        self.audio_norm.to(device)
+        self.fc.to(device)
+    def forward(self, audio, text):
         """
         Args:
-            mels: Tensor có shape (batch, num_chunks, 80, target_length)
+            audio: Tensor có shape (batch, num_chunks, target_length)
             text: List các chuỗi văn bản (batch_size strings)
         Returns:
             logits: Tensor dự đoán logits cho các lớp (batch, num_classes)
         """
-        batch_size, num_chunks, waveform_len = mels.shape
-        mels = mels.view(batch_size * num_chunks, waveform_len)
+        batch_size, num_chunks, waveform_len = audio.shape
+        # audio = audio.view(batch_size * num_chunks, waveform_len)
         # --- Audio Branch ---
-        audio_encoder_out = self.audio_encoder(
-            input_values=mels
-        )
-        audio_features = audio_encoder_out.last_hidden_state.mean(dim=1)  # Mean pooling theo thời gian
+        device = self.device
+        audio_encoder_out = []
+        for i in range(num_chunks):
+            inp = audio[:, i, :].to(device) 
+            out = self.audio_encoder(input_values=inp).last_hidden_state
+            audio_encoder_out.append(out.mean(dim=1).detach().cpu())  # (batch, 1, audio_hidden_dim)
+            
+            del inp, out # remove unused variables 
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+            
+            # # Print for debugging memory usage error
+            # print(f'Successfully processed audio {i+1}')
+            # print(torch.cuda.memory_summary(device, abbreviated=False))
+        audio_features = torch.stack(audio_encoder_out, dim=1).to(device)  # (batch, num_chunks, audio_hidden_dim)
+        # print(f"audio_encoder_out shape: {audio_encoder_out.shape}")
+        # audio_features = audio_encoder_out.mean(dim=1)  # Mean pooling theo thời gian
+        # print(f"audio_features shape: {audio_features.shape}")
         audio_features = audio_features.view(batch_size, num_chunks, self.audio_hidden_dim)
         audio_features = self.audio_proj(audio_features)  # (batch, num_chunks, d_fuse)
         audio_features = self.audio_norm(audio_features)
@@ -109,3 +143,34 @@ class MultimodalWav2VecScoreModel(nn.Module):
         # --- Prediction ---
         logits = self.fc(fused_vector)  # (batch, num_classes)
         return logits
+
+def main(): 
+    # Example usage
+    model = MultimodalWav2VecScoreModel(device = 'cuda')
+    
+    # # Dummy data
+    # batch_size = 1
+    # num_chunks = 1
+    # waveform_len = 480000  # Ví dụ: 1 giây âm thanh với tần số mẫu 16kHz
+    # audio = torch.randn(batch_size, num_chunks, waveform_len)
+    # text = ["Second of all, have I ever travelled alone? No, I've travelled with my friends. Sometimes I've travelled with my family and with my good friends."]
+    # # Forward pass
+    # logits = model(audio, text)
+    # print(nn.functional.softmax(logits))   # Expected output: (batch_size, num_classes)
+    from dataloader import ChunkedSpeakingDataset, collate_fn, SpeakingDatasetWav2Vec2
+    from torch.utils.data import DataLoader
+    from transformers import Wav2Vec2Processor
+    
+    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+    dataset = SpeakingDatasetWav2Vec2(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
+                                     processor=processor)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
+
+    for batch in dataloader:
+        audio_tensor, label_tensor, texts_list = batch
+        logits = model(audio_tensor, texts_list)
+        print(f"Logits shape: {logits.shape}")
+        break 
+
+if __name__ == "__main__":
+    main()

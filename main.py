@@ -1,7 +1,5 @@
 import torch
 import torch.optim as optim
-import torch.nn as nn
-from torch.optim.lr_scheduler import CyclicLR
 from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 import random
 import logging
@@ -10,15 +8,18 @@ import numpy as np
 import wandb
 import yaml
 from sklearn.model_selection import train_test_split
-from dataloader import SpeakingDataset, collate_fn
+from dataloader import SpeakingDatasetWav2Vec2, collate_fn, ChunkedSpeakingDataset
 from model_new import MultimodalWav2VecScoreModel
 from transformers import get_linear_schedule_with_warmup, Wav2Vec2Processor
 from CELoss import SoftLabelCrossEntropyLoss
+from tqdm.auto import tqdm
+import gc 
+
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-wandb.login(key='072fb112587c6b4507f5ec59e575d234c3e22649', relogin=True)
+wandb.login(key='b6bf189f51b29501771e7a3294635dfee6d75021', relogin=True)
 
 def seed_everything(seed):
     random.seed(seed)
@@ -34,6 +35,7 @@ def compute_class_weights(labels, num_classes=21):
     Tính weight cho từng lớp dựa vào số lượng mẫu của lớp đó.
     Sử dụng công thức: weight[class] = total_samples / (num_classes * count[class])
     """
+    print("Labels:", labels)
     counts = np.zeros(num_classes)
     for label in labels:
         counts[label] += 1
@@ -42,26 +44,24 @@ def compute_class_weights(labels, num_classes=21):
     weights[np.isinf(weights)] = 0.0
     return torch.tensor(weights, dtype=torch.float)
 
-def evaluate(model, audio_encoder_id, data_loader, criterion, device):
+def evaluate(model, data_loader, criterion, device):
     model.eval()
     total_samples = 0
     running_loss = 0.0
     running_mae = 0.0
-    processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     with torch.no_grad():
-        for mels, labels, texts in data_loader:
-            mels = processor(mels, sampling_rate=16000, return_tensors="pt")
-            mels = mels['input_values'].squeeze(1)
-            with torch.cuda.amp.autocast():
-                logits = model(mels.to(device), texts)
+        for mels, labels, texts in tqdm(data_loader):
+            
+            with torch.amp.autocast('cuda'):
+                logits = model(mels, texts)
                 loss = criterion(logits, labels.to(device))
                 
             running_loss += loss.item() * mels.size(0)
             total_samples += mels.size(0)
             
             preds = torch.argmax(logits, dim=1)
-            preds_scores = preds.float() * 0.5
-            true_scores = labels.float() * 0.5
+            preds_scores = preds.to(device).float() * 0.5
+            true_scores = labels.to(device).float() * 0.5
             mae = torch.abs(preds_scores - true_scores).mean().item()
             running_mae += mae * mels.size(0)
             
@@ -69,7 +69,7 @@ def evaluate(model, audio_encoder_id, data_loader, criterion, device):
     avg_mae = running_mae / total_samples if total_samples > 0 else 0
     return avg_loss, avg_mae
 
-def train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, criterion, device, 
+def train_model(model,  train_loader, val_loader, optimizer, criterion, device, 
                 num_epochs, checkpoint_path, log_file, early_stop_patience, warmup_epochs, project, config):
     logging.basicConfig(level=logging.INFO, 
                         filename=log_file, 
@@ -96,10 +96,11 @@ def train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, cr
     global_step = 0
     ckpt_dict = {}
 
-    wandb.init(project=project, config=config)
+    # Resume from epoch 10
+    wandb.init(project=project, config=config, resume = 'allow', id = 'warm-river-67')
     wandb.watch(model, log="all")
     
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     # Các list lưu các metric qua từng epoch để vẽ biểu đồ
     epoch_list = []
@@ -107,20 +108,17 @@ def train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, cr
     val_loss_list = []
     val_mae_list = []
 
-    processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
 
     for epoch in range(num_epochs):
         total_samples = 0
         running_loss = 0.0
         for i, (mels, labels, texts) in enumerate(train_loader):
             model.train()
-            # Để processor hoạt động với float32 mặc định
-            mels = processor(mels, sampling_rate=16000, return_tensors="pt")
-            mels = mels['input_values'].squeeze(1)
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 optimizer.zero_grad()
-                logits = model(mels.to(device), texts)
+                logits = model(mels, texts)
                 loss = criterion(logits, labels.to(device))
+                
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
@@ -150,7 +148,8 @@ def train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, cr
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
         
-        val_loss, val_mae = evaluate(model, audio_encoder_id, val_loader, criterion, device)
+        
+        val_loss, val_mae = evaluate(model,  val_loader, criterion, device)
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] validation completed. Avg Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] validation completed. Avg Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
         
@@ -226,9 +225,9 @@ def main():
     seed_everything(42)
     
     csv_file = config["csv_file"]
-    audio_encoder_id = config["audio_encoder_id"]
     batch_size = config["batch_size"]
     num_epochs = config["num_epochs"]
+    audio_encoder_id = config["audio_encoder_id"]
     learning_rate = config["learning_rate"]
     encoder_lr = config["encoder_lr"]
     sample_rate = config["sample_rate"]
@@ -238,21 +237,24 @@ def main():
     log_file = config["log_file"]
     num_workers = config["num_workers"]
     istrain = config.get("istrain", True)
+    load_pretrained = config.get("load_pretrained", False)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
     
+    timestamp_folder = 'audio_chunks'
+    processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     # Khởi tạo dataset
-    train_dataset = SpeakingDataset(csv_file=csv_file, sample_rate=sample_rate, is_train=True)
-    val_dataset = SpeakingDataset(csv_file=csv_file, sample_rate=sample_rate, is_train=False)
-    test_dataset = SpeakingDataset(csv_file=csv_file, sample_rate=sample_rate, is_train=False)
+    train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
+    val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    test_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
     
         
     print("Số video trong dataset:", len(train_dataset))
     
     # Chia dữ liệu theo stratify dựa trên nhãn pronunciation
     df = train_dataset.df
-    labels = df['pronunciation']
+    labels= df['pronunciation'].apply(lambda s: int(round(s / 0.5)))
     indices = np.arange(len(train_dataset))
 
     train_idx, temp_idx = train_test_split(
@@ -290,7 +292,8 @@ def main():
     print(test_df['pronunciation'].value_counts().sort_index())
     
     # Tính class weights cho tập train
-    train_scores = df.iloc[train_idx]['pronunciation'].apply(lambda s: int(round(s / 0.5))).values
+    # train_scores = df.iloc[train_idx]['pronunciation'].apply(lambda s: int(round(s / 0.5))).values
+    train_scores = labels.iloc[train_idx].values
     class_weights = compute_class_weights(train_scores, num_classes=21)
     print("Class Weights:", class_weights)
     
@@ -300,8 +303,27 @@ def main():
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     
-    model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id,text_model_name='bert-base-uncased')
+    model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id, device = device)
     print("Model created. Fusion dimension =", model.fc[0].in_features)
+    
+    if load_pretrained:
+        checkpoint_path = "SaveCKPT_classification.pth"
+        # Load toàn bộ dictionary checkpoint
+        ckpt_dict = torch.load(checkpoint_path)
+
+        # Lấy model_state_dict của epoch 10
+        epoch = 10 
+        if str(epoch) in ckpt_dict:
+            model_state_dict_epoch = ckpt_dict[str(epoch)]['model_state_dict']
+            print(f"Đã load model_state_dict của epoch {epoch}")
+        
+        model.load_state_dict(model_state_dict_epoch)
+        print("Checkpoint loaded from:", checkpoint_path)
+        
+        del ckpt_dict, model_state_dict_epoch # remove unused variables 
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
     
     # Phân nhóm tham số
     encoder_params = list(model.audio_encoder.parameters()) + list(model.text_encoder.parameters())
@@ -316,7 +338,7 @@ def main():
     # Sử dụng CrossEntropyLoss với class weights
     criterion = SoftLabelCrossEntropyLoss(num_classes=21,class_weight=class_weights.to(device)).to(device)
     
-    model = train_model(model, audio_encoder_id, train_loader, val_loader, optimizer, criterion, device, 
+    model = train_model(model, train_loader, val_loader, optimizer, criterion, device, 
                          num_epochs=num_epochs, 
                          checkpoint_path=checkpoint_path, 
                          log_file=log_file, 
@@ -330,7 +352,7 @@ def main():
                         filemode='a',
                         format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger()
-    test_loss, test_mae = evaluate(model, audio_encoder_id, test_loader, criterion, device)
+    test_loss, test_mae = evaluate(model, test_loader, criterion, device)
     logger.info(f"Final Test - CrossEntropy Loss: {test_loss:.4f}, MAE: {test_mae:.4f}")
     print(f"Final Test - CrossEntropy Loss: {test_loss:.4f}, MAE: {test_mae:.4f}")
 
