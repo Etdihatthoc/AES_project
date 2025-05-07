@@ -13,6 +13,7 @@ from model_new import MultimodalWav2VecScoreModel
 from transformers import get_linear_schedule_with_warmup, Wav2Vec2Processor
 from CELoss import SoftLabelCrossEntropyLoss
 from tqdm.auto import tqdm
+import gc 
 
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -95,7 +96,8 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
     global_step = 0
     ckpt_dict = {}
 
-    wandb.init(project=project, config=config)
+    # Resume from epoch 10
+    wandb.init(project=project, config=config, resume = 'allow', id = 'warm-river-67')
     wandb.watch(model, log="all")
     
     scaler = torch.amp.GradScaler('cuda')
@@ -235,6 +237,7 @@ def main():
     log_file = config["log_file"]
     num_workers = config["num_workers"]
     istrain = config.get("istrain", True)
+    load_pretrained = config.get("load_pretrained", False)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
@@ -302,6 +305,25 @@ def main():
     
     model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id, device = device)
     print("Model created. Fusion dimension =", model.fc[0].in_features)
+    
+    if load_pretrained:
+        checkpoint_path = "SaveCKPT_classification.pth"
+        # Load toàn bộ dictionary checkpoint
+        ckpt_dict = torch.load(checkpoint_path)
+
+        # Lấy model_state_dict của epoch 10
+        epoch = 10 
+        if str(epoch) in ckpt_dict:
+            model_state_dict_epoch = ckpt_dict[str(epoch)]['model_state_dict']
+            print(f"Đã load model_state_dict của epoch {epoch}")
+        
+        model.load_state_dict(model_state_dict_epoch)
+        print("Checkpoint loaded from:", checkpoint_path)
+        
+        del ckpt_dict, model_state_dict_epoch # remove unused variables 
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
     
     # Phân nhóm tham số
     encoder_params = list(model.audio_encoder.parameters()) + list(model.text_encoder.parameters())
