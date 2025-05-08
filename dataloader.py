@@ -60,7 +60,8 @@ class SpeakingDatasetWav2Vec2(data.Dataset):
         df_aug = pd.read_csv(csv_file)
         df_raw = pd.read_csv(csv_file)
         
-        self.df = pd.concat([df_raw, df_aug], ignore_index=True)
+        # self.df = pd.concat([df_raw, df_aug], ignore_index=True)
+        self.df = df_raw
         self.sample_rate = sample_rate
         self.chunk_length_sec = chunk_length_sec
         self.target_length = target_length
@@ -275,15 +276,17 @@ def main():
     # Example usage
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
     
-    dataset = SpeakingDatasetWav2Vec2(csv_file='/mnt/disk1/quangminh/wav2vec2_finetune/output (1).csv',
+    dataset = SpeakingDatasetWav2Vec2(csv_file='test_pro.csv',
                                      processor=processor)
-    dataloader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
+    
+    
+    # dataloader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
 
-    for batch in dataloader:
-        audio_tensor, label_tensor, texts_list = batch
-        print(label_tensor)
-        # print(f"Audio tensor shape: {audio_tensor.shape}")
-        break 
+    # for batch in dataloader:
+    #     audio_tensor, label_tensor, texts_list = batch
+    #     print(label_tensor)
+    #     # print(f"Audio tensor shape: {audio_tensor.shape}")
+    #     break 
 
 if __name__ == "__main__":
     main()
