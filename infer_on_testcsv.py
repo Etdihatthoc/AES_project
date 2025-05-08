@@ -250,7 +250,7 @@ def main():
     print(f"R2 Score: {r2:.4f}")
     
     # Lưu kết quả dự đoán và ground truth ra file CSV
-    save_results_csv(predictions, ground_truths, output_csv_path='results_pronunciation.csv')
+    save_results_csv(predictions, ground_truths, output_csv_path='results_pronunciation_onfixtest.csv')
 
 
 if __name__ == '__main__':
