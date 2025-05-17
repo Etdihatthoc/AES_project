@@ -50,7 +50,7 @@ def pad_or_trim_tensor(tensor, length=3000):
 class SpeakingDatasetWav2Vec2(data.Dataset):
     def __init__(self, csv_file, processor, sample_rate=16000, chunk_length_sec=30, target_length=3000, num_chunks=10, is_train=True):
         """
-        csv_file: Đường dẫn file CSV chứa các cột 'absolute_path', 'pronunciation' và 'text'
+        csv_file: Đường dẫn file CSV chứa các cột 'absolute_path', 'fluency' và 'text'
         sample_rate: Tốc độ mẫu của audio (16kHz)
         chunk_length_sec: Độ dài của mỗi chunk (giây)
         target_length: Số frame mong muốn của mel spectrogram (ví dụ: 3000)
@@ -60,8 +60,10 @@ class SpeakingDatasetWav2Vec2(data.Dataset):
         df_aug = pd.read_csv(csv_file)
         df_raw = pd.read_csv(csv_file)
         
-        # self.df = pd.concat([df_raw, df_aug], ignore_index=True)
-        self.df = df_raw
+        if is_train:
+            self.df = pd.concat([df_raw, df_aug], ignore_index=True)
+        else: 
+            self.df = df_raw
         self.sample_rate = sample_rate
         self.chunk_length_sec = chunk_length_sec
         self.target_length = target_length
@@ -80,7 +82,7 @@ class SpeakingDatasetWav2Vec2(data.Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         audio_path = row['absolute_path'].replace('/mnt/son_usb/DATA_Vocal', '/media/gpus/Data/DATA_Vocal')
-        score = row['pronunciation']  # điểm theo thang 0-10, với bước nhảy 0.5
+        score = row['fluency']  # điểm theo thang 0-10, với bước nhảy 0.5
         transcript = row['text']
     
         # Tính label cho bài toán classification: chuyển score thành index (0 -> 0, 0.5 -> 1, ..., 10 -> 20)
@@ -98,8 +100,6 @@ class SpeakingDatasetWav2Vec2(data.Dataset):
             if random.random() < 0.7:
                 audio = self.pitch_aug.augment(audio)[0]
         
-        
-    
         # Cut into chunks
         audio_chunks = fixed_chunk_audio(audio, sr, num_chunks=self.num_chunks, chunk_length_sec=self.chunk_length_sec)
         
