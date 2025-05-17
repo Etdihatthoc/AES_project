@@ -8,7 +8,7 @@ import numpy as np
 import wandb
 import yaml
 from sklearn.model_selection import train_test_split
-from dataloader import SpeakingDatasetWav2Vec2, collate_fn, ChunkedSpeakingDataset
+from dataloader import SpeakingDatasetWav2Vec2, collate_fn
 from model_new import MultimodalWav2VecScoreModel
 from transformers import get_linear_schedule_with_warmup, Wav2Vec2Processor
 from CELoss import SoftLabelCrossEntropyLoss
@@ -44,26 +44,25 @@ def compute_class_weights(labels, num_classes=21):
     weights[np.isinf(weights)] = 0.0
     return torch.tensor(weights, dtype=torch.float)
 
-def evaluate(model, data_loader, criterion, device):
+def evaluate(model, val_loader, criterion, device):
     model.eval()
     total_samples = 0
     running_loss = 0.0
     running_mae = 0.0
     with torch.no_grad():
-        for mels, labels, texts in tqdm(data_loader):
-            
+        for audios, labels, texts in tqdm(val_loader): 
             with torch.amp.autocast('cuda'):
-                logits = model(mels, texts)
+                logits = model(audios, texts)
                 loss = criterion(logits, labels.to(device))
                 
-            running_loss += loss.item() * mels.size(0)
-            total_samples += mels.size(0)
+            running_loss += loss.item() * audios.size(0)
+            total_samples += audios.size(0)
             
             preds = torch.argmax(logits, dim=1)
             preds_scores = preds.to(device).float() * 0.5
             true_scores = labels.to(device).float() * 0.5
             mae = torch.abs(preds_scores - true_scores).mean().item()
-            running_mae += mae * mels.size(0)
+            running_mae += mae * audios.size(0)
             
     avg_loss = running_loss / total_samples if total_samples > 0 else 0
     avg_mae = running_mae / total_samples if total_samples > 0 else 0
@@ -97,7 +96,7 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
     ckpt_dict = {}
 
     # Resume from epoch 10
-    wandb.init(project=project, config=config, resume = 'allow', id = 'warm-river-67')
+    wandb.init(project=project, config=config)
     wandb.watch(model, log="all")
     
     scaler = torch.amp.GradScaler('cuda')
@@ -147,7 +146,6 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
         train_loss = running_loss / total_samples
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] training completed. Average Loss: {train_loss:.4f}")
-        
         
         val_loss, val_mae = evaluate(model,  val_loader, criterion, device)
         logger.info(f"Epoch [{epoch+1}/{num_epochs}] validation completed. Avg Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
@@ -202,7 +200,7 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
                     'optimizer_state_dict': optimizer.state_dict(),
                     'loss': val_mae,
                 }
-                torch.save(ckpt_dict, "SaveCKPT_classification.pth")
+                torch.save(ckpt_dict, "SaveCKPTClassificationFLuency.pth")
                 break
 
         ckpt_dict[str(epoch+1)] = {
@@ -211,8 +209,8 @@ def train_model(model,  train_loader, val_loader, optimizer, criterion, device,
             'optimizer_state_dict': optimizer.state_dict(),
             'loss': val_mae,
         }
-        torch.save(ckpt_dict, "SaveCKPT_classification.pth")
-        logger.info(f"Checkpoint for epoch {epoch+1} saved in SaveCKPT_classification.pth")
+        torch.save(ckpt_dict, "SaveCKPTClassificationFLuency.pth")
+        logger.info(f"Checkpoint for epoch {epoch+1} saved in SaveCKPTClassificationFLuency.pth")
                 
     wandb.finish()
     return model
@@ -224,7 +222,9 @@ def main():
 
     seed_everything(42)
     
-    csv_file = config["csv_file"]
+    train_file = config["train_file"]
+    val_file = config["val_file"]
+    test_file = config["test_file"]
     batch_size = config["batch_size"]
     num_epochs = config["num_epochs"]
     audio_encoder_id = config["audio_encoder_id"]
@@ -242,88 +242,53 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
     
-    timestamp_folder = 'audio_chunks'
     processor = Wav2Vec2Processor.from_pretrained(audio_encoder_id)
     # Khởi tạo dataset
-    train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
-    val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
-    test_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    train_dataset = SpeakingDatasetWav2Vec2(csv_file = train_file, processor=processor, sample_rate=sample_rate, is_train=True)
+    val_dataset = SpeakingDatasetWav2Vec2(csv_file = val_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    test_dataset = SpeakingDatasetWav2Vec2(csv_file = test_file, processor=processor, sample_rate=sample_rate, is_train=False)
     
         
-    print("Số video trong dataset:", len(train_dataset))
     
-    # Chia dữ liệu theo stratify dựa trên nhãn pronunciation
-    df = train_dataset.df
-    labels= df['pronunciation'].apply(lambda s: int(round(s / 0.5)))
-    indices = np.arange(len(train_dataset))
-
-    train_idx, temp_idx = train_test_split(
-        indices,
-        test_size=0.3,
-        stratify=labels,
-        random_state=42
-    )
-    temp_labels = labels.iloc[temp_idx]
-    val_idx, test_idx = train_test_split(
-        temp_idx,
-        test_size=2/3,
-        stratify=temp_labels,
-        random_state=42
-    )
-
-    train_set = Subset(train_dataset, train_idx)
-    val_set = Subset(val_dataset, val_idx)
-    test_set = Subset(test_dataset, test_idx)
-    
-    print("Số video trong train:", len(train_set))
-    print("Số video trong validation:", len(val_set))
-    print("Số video trong test:", len(test_set))
+    print("Số video trong train:", len(train_dataset))
+    print("Số video trong validation:", len(val_dataset))
+    print("Số video trong test:", len(test_dataset))
     
     # Thống kê số lượng mẫu cho từng nhãn
-    train_df = df.iloc[train_idx]
-    val_df = df.iloc[val_idx]
-    test_df = df.iloc[test_idx]
+    train_df = train_dataset.df
+    val_df = val_dataset.df
     
     print("Số lượng mẫu cho từng nhãn trong train:")
-    print(train_df['pronunciation'].value_counts().sort_index())
+    print(train_df['fluency'].value_counts().sort_index())
     print("\nSố lượng mẫu cho từng nhãn trong validation:")
-    print(val_df['pronunciation'].value_counts().sort_index())
-    print("\nSố lượng mẫu cho từng nhãn trong test:")
-    print(test_df['pronunciation'].value_counts().sort_index())
+    print(val_df['fluency'].value_counts().sort_index())
     
     # Tính class weights cho tập train
-    # train_scores = df.iloc[train_idx]['pronunciation'].apply(lambda s: int(round(s / 0.5))).values
-    train_scores = labels.iloc[train_idx].values
+    labels= train_df['fluency'].apply(lambda s: int(round(s / 0.5)))
+    train_scores = labels.values
     class_weights = compute_class_weights(train_scores, num_classes=21)
     print("Class Weights:", class_weights)
     
-    sampler = WeightedRandomSampler(np.ones(len(train_set)), num_samples=len(train_set), replacement=True)
+    train_sampler = WeightedRandomSampler(np.ones(len(train_dataset)), num_samples=len(train_dataset), replacement=True)
+    val_sampler = WeightedRandomSampler(np.ones(len(val_dataset)), num_samples=len(val_dataset), replacement=True)
+    test_sampler = WeightedRandomSampler(np.ones(len(test_dataset)), num_samples=len(test_dataset), replacement=True)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, collate_fn=collate_fn, num_workers=num_workers)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=collate_fn, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, sampler = val_sampler, collate_fn=collate_fn, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler = test_sampler, collate_fn=collate_fn, num_workers=num_workers)
     
     model = MultimodalWav2VecScoreModel(audio_encoder_id = audio_encoder_id, device = device)
     print("Model created. Fusion dimension =", model.fc[0].in_features)
     
     if load_pretrained:
-        checkpoint_path = "SaveCKPT_classification.pth"
-        # Load toàn bộ dictionary checkpoint
-        ckpt_dict = torch.load(checkpoint_path)
-
-        # Lấy model_state_dict của epoch 10
-        epoch = 10 
-        if str(epoch) in ckpt_dict:
-            model_state_dict_epoch = ckpt_dict[str(epoch)]['model_state_dict']
-            print(f"Đã load model_state_dict của epoch {epoch}")
+        ckpt = torch.load(config['pretrained_path'])
+        model.load_state_dict(ckpt['model_state_dict'])
+        print("Checkpoint loaded from:", config['pretrained_path'])
         
-        model.load_state_dict(model_state_dict_epoch)
-        print("Checkpoint loaded from:", checkpoint_path)
-        
-        del ckpt_dict, model_state_dict_epoch # remove unused variables 
+        del ckpt 
         gc.collect()
         torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
+        print("Cleared cache after loading checkpoint.")
     
     # Phân nhóm tham số
     encoder_params = list(model.audio_encoder.parameters()) + list(model.text_encoder.parameters())
