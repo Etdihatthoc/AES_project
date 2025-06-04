@@ -119,7 +119,6 @@ def main():
     # Đọc config từ file YAML
     parser = argparse.ArgumentParser(description="Inference on test CSV")
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file')
-    parser.add_argument('--ckptpath', type=str, default="SaveCKPT_classification.pth", help='Path to the checkpoint file')
     args = parser.parse_args()
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
@@ -127,7 +126,7 @@ def main():
     seed_everything(42)
     
     # Lấy các tham số từ config
-    csv_file = config["csv_file"]
+    test_file = config["test_file"]
     batch_size = config["batch_size"]
     audio_encoder_id = config["audio_encoder_id"]
     sample_rate = config["sample_rate"]
@@ -156,30 +155,8 @@ def main():
     # # Khởi tạo dataset
     # train_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=True)
     # val_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
-    test_dataset = SpeakingDatasetWav2Vec2(csv_file = csv_file, processor=processor, sample_rate=sample_rate, is_train=False)
+    test_dataset = SpeakingDatasetWav2Vec2(csv_file = test_file, processor=processor, sample_rate=sample_rate, is_train=False)
     
-    # print("Số video trong dataset:", len(test_dataset))
-    
-    # # Chia dữ liệu theo stratify dựa trên nhãn pronunciation (giả sử các nhãn đã được làm tròn theo bước 0.5)
-    # df = train_dataset.df
-    # labels = df['pronunciation']
-    # indices = np.arange(len(train_dataset))
-
-    # train_idx, temp_idx = train_test_split(
-    #     indices,
-    #     test_size=0.3,
-    #     stratify=labels,
-    #     random_state=42
-    # )
-    # temp_labels = labels.iloc[temp_idx]
-    # val_idx, test_idx = train_test_split(
-    #     temp_idx,
-    #     test_size=2/3,
-    #     stratify=temp_labels,
-    #     random_state=42
-    # )
-
-    # test_set = Subset(test_dataset, test_idx)
     
     print("Số video trong test:", len(test_dataset))
     logger.info(f"Số video trong test: {len(test_dataset)}")
@@ -197,14 +174,12 @@ def main():
     # model.load_state_dict(avg_state_dict)
     # print("Weighted average checkpoint loaded from epochs:", selected_epochs)
     
-    
-    checkpoint_path = args.ckptpath
 
     # Load toàn bộ dictionary checkpoint
     ckpt_dict = torch.load(checkpoint_path)
 
     # Lấy model_state_dict của epoch 10
-    epoch = 10 
+    epoch = 5
     if str(epoch) in ckpt_dict:
         model_state_dict_epoch = ckpt_dict[str(epoch)]['model_state_dict']
         print(f"Đã load model_state_dict của epoch {epoch}")
@@ -250,7 +225,7 @@ def main():
     print(f"R2 Score: {r2:.4f}")
     
     # Lưu kết quả dự đoán và ground truth ra file CSV
-    save_results_csv(predictions, ground_truths, output_csv_path='results_pronunciation_onfixtest.csv')
+    save_results_csv(predictions, ground_truths, output_csv_path='result_fluency_on_fixtest1.csv')
 
 
 if __name__ == '__main__':
