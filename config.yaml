@@ -1,0 +1,15 @@
+project: "wav2vec2_score_training"
+audio_encoder_id: "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+num_epochs: 2
+batch_size: 2
+learning_rate: 0.00001
+encoder_lr: 0.000003      # Learning rate cho encoder (Whisper và DistilBERT)
+early_stop_patience: 5
+warmup_epochs: 1
+csv_file: "test_pro.csv"
+sample_rate: 16000
+num_workers: 40
+checkpoint_path: "SaveCKPT_classification.pth"
+log_file: "log/log_pronunciation/infer_SWA_pronunciation_wav2vec2model_fixtestset.log"
+istrain: true
+load_pretrained: true
